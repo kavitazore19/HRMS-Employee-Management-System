@@ -1,0 +1,463 @@
+
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import api from "../../api/axiosConfig";
+import "./EmployeeDashboard.css";
+
+function EmployeeDashboard() {
+    const { user, logout } = useAuth();
+    const navigate = useNavigate();
+
+    const [activeTab, setActiveTab] = useState("Overview");
+    const [attendance, setAttendance] = useState(null);
+    const [monthlyAttendance, setMonthlyAttendance] = useState([]);
+    const [leaves, setLeaves] = useState([]);
+    const [leaveBalances, setLeaveBalances] = useState([]);
+    const [message, setMessage] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    const [leaveForm, setLeaveForm] = useState({
+        leaveType: "CASUAL",
+        startDate: "",
+        endDate: "",
+        reason: ""
+    });
+
+    const employeeId = user?.employeeId;
+
+    const loadDashboard = async () => {
+        if (!employeeId) {
+            setMessage("Your account is not linked to an employee record.");
+            return;
+        }
+
+        setLoading(true);
+
+        const results = await Promise.allSettled([
+            api.get(`/attendance/today/${employeeId}`),
+            api.get(`/attendance/monthly/${employeeId}`, {
+                params: {
+                    year: new Date().getFullYear(),
+                    month: new Date().getMonth() + 1
+                }
+            }),
+            api.get("/leaves/my"),
+            api.get("/leaves/balances")
+        ]);
+
+        if (results[0].status === "fulfilled") {
+            setAttendance(results[0].value.data);
+        } else {
+            setAttendance(null);
+        }
+
+        if (results[1].status === "fulfilled") {
+            setMonthlyAttendance(
+                Array.isArray(results[1].value.data)
+                    ? results[1].value.data
+                    : []
+            );
+        }
+
+        if (results[2].status === "fulfilled") {
+            setLeaves(
+                Array.isArray(results[2].value.data)
+                    ? results[2].value.data
+                    : []
+            );
+        }
+
+        if (results[3].status === "fulfilled") {
+            setLeaveBalances(
+                Array.isArray(results[3].value.data)
+                    ? results[3].value.data
+                    : []
+            );
+        }
+
+        setLoading(false);
+    };
+
+    useEffect(() => {
+        loadDashboard();
+    }, [employeeId]);
+
+    const handleLogout = () => {
+        logout();
+        navigate("/");
+    };
+
+    const handlePunch = async (action) => {
+        if (!employeeId) {
+            setMessage("Employee ID is missing.");
+            return;
+        }
+
+        try {
+            setMessage("");
+
+            const response = await api.post(
+                `/attendance/${action}/${employeeId}`
+            );
+
+            setAttendance(response.data);
+            setMessage(
+                action === "punch-in"
+                    ? "Punch in successful!"
+                    : "Punch out successful!"
+            );
+
+            loadDashboard();
+        } catch (error) {
+            setMessage(
+                error.response?.data?.message ||
+                `Could not ${action.replace("-", " ")}.`
+            );
+        }
+    };
+
+    const handleLeaveSubmit = async (e) => {
+        e.preventDefault();
+
+        try {
+            setMessage("");
+
+            await api.post("/leaves/apply", leaveForm);
+
+            setMessage("Leave application submitted successfully!");
+
+            setLeaveForm({
+                leaveType: "CASUAL",
+                startDate: "",
+                endDate: "",
+                reason: ""
+            });
+
+            loadDashboard();
+        } catch (error) {
+            setMessage(
+                error.response?.data?.message ||
+                "Could not submit leave application."
+            );
+        }
+    };
+
+    const navItems = [
+        "Overview",
+        "Attendance",
+        "Apply Leave",
+        "My Leaves",
+        "Leave Balance",
+        "Profile"
+    ];
+
+    return (
+        <div className="employee-layout">
+            <aside className="employee-sidebar">
+                <h2>iCeipt HRMS</h2>
+                <p>Employee Portal</p>
+
+                <nav>
+                    {navItems.map((item) => (
+                        <button
+                            key={item}
+                            className={activeTab === item ? "active" : ""}
+                            onClick={() => {
+                                setActiveTab(item);
+                                setMessage("");
+                            }}
+                        >
+                            {item}
+                        </button>
+                    ))}
+                </nav>
+
+                <button className="employee-logout" onClick={handleLogout}>
+                    Logout
+                </button>
+            </aside>
+
+            <main className="employee-main">
+                <header className="employee-header">
+                    <div>
+                        <h1>{activeTab}</h1>
+                        <p>
+                            Welcome, {user?.employeeName || user?.email || "Employee"}
+                        </p>
+                    </div>
+
+                    <button onClick={loadDashboard}>
+                        Refresh
+                    </button>
+                </header>
+
+                {message && (
+                    <div className="employee-message">{message}</div>
+                )}
+
+                {loading && <p>Loading...</p>}
+
+                {activeTab === "Overview" && (
+                    <section>
+                        <div className="employee-cards">
+                            <div className="employee-card">
+                                <h3>Employee ID</h3>
+                                <h2>{employeeId || "Not linked"}</h2>
+                            </div>
+
+                            <div className="employee-card">
+                                <h3>Attendance Today</h3>
+                                <h2>{attendance?.status || "Not marked"}</h2>
+                            </div>
+
+                            <div className="employee-card">
+                                <h3>My Leave Requests</h3>
+                                <h2>{leaves.length}</h2>
+                            </div>
+
+                            <div className="employee-card">
+                                <h3>Monthly Attendance</h3>
+                                <h2>{monthlyAttendance.length} days</h2>
+                            </div>
+                        </div>
+
+                        <div className="employee-panel">
+                            <h2>Today's Attendance</h2>
+                            <p>
+                                Punch In: {attendance?.punchIn
+                                    ? new Date(attendance.punchIn).toLocaleTimeString()
+                                    : "Not punched in"}
+                            </p>
+                            <p>
+                                Punch Out: {attendance?.punchOut
+                                    ? new Date(attendance.punchOut).toLocaleTimeString()
+                                    : "Not punched out"}
+                            </p>
+
+                            <button onClick={() => handlePunch("punch-in")}>
+                                Punch In
+                            </button>
+
+                            <button onClick={() => handlePunch("punch-out")}>
+                                Punch Out
+                            </button>
+                        </div>
+                    </section>
+                )}
+
+                {activeTab === "Attendance" && (
+                    <section className="employee-panel">
+                        <h2>My Attendance</h2>
+
+                        <div className="employee-cards">
+                            <div className="employee-card">
+                                <h3>Today's Status</h3>
+                                <h2>{attendance?.status || "Not marked"}</h2>
+                            </div>
+
+                            <div className="employee-card">
+                                <h3>Days Recorded This Month</h3>
+                                <h2>{monthlyAttendance.length}</h2>
+                            </div>
+                        </div>
+
+                        <h3>Attendance Actions</h3>
+
+                        <button onClick={() => handlePunch("punch-in")}>
+                            Punch In
+                        </button>
+
+                        <button onClick={() => handlePunch("punch-out")}>
+                            Punch Out
+                        </button>
+
+                        <h3>Monthly Attendance Records</h3>
+
+                        <div className="employee-table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Punch In</th>
+                                        <th>Punch Out</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {monthlyAttendance.map((record) => (
+                                        <tr key={record.id}>
+                                            <td>{record.attendanceDate}</td>
+                                            <td>
+                                                {record.punchIn
+                                                    ? new Date(record.punchIn).toLocaleTimeString()
+                                                    : "—"}
+                                            </td>
+                                            <td>
+                                                {record.punchOut
+                                                    ? new Date(record.punchOut).toLocaleTimeString()
+                                                    : "—"}
+                                            </td>
+                                            <td>{record.status}</td>
+                                        </tr>
+                                    ))}
+
+                                    {monthlyAttendance.length === 0 && (
+                                        <tr>
+                                            <td colSpan="4">
+                                                No attendance records found.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                )}
+
+                {activeTab === "Apply Leave" && (
+                    <section className="employee-panel">
+                        <h2>Apply for Leave</h2>
+
+                        <form onSubmit={handleLeaveSubmit}>
+                            <label>Leave Type</label>
+                            <select
+                                value={leaveForm.leaveType}
+                                onChange={(e) =>
+                                    setLeaveForm({
+                                        ...leaveForm,
+                                        leaveType: e.target.value
+                                    })
+                                }
+                            >
+                                <option value="CASUAL">Casual Leave</option>
+                                <option value="SICK">Sick Leave</option>
+                                <option value="EARNED">Earned Leave</option>
+                            </select>
+
+                            <label>Start Date</label>
+                            <input
+                                type="date"
+                                required
+                                value={leaveForm.startDate}
+                                onChange={(e) =>
+                                    setLeaveForm({
+                                        ...leaveForm,
+                                        startDate: e.target.value
+                                    })
+                                }
+                            />
+
+                            <label>End Date</label>
+                            <input
+                                type="date"
+                                required
+                                value={leaveForm.endDate}
+                                min={leaveForm.startDate}
+                                onChange={(e) =>
+                                    setLeaveForm({
+                                        ...leaveForm,
+                                        endDate: e.target.value
+                                    })
+                                }
+                            />
+
+                            <label>Reason</label>
+                            <textarea
+                                required
+                                value={leaveForm.reason}
+                                onChange={(e) =>
+                                    setLeaveForm({
+                                        ...leaveForm,
+                                        reason: e.target.value
+                                    })
+                                }
+                                placeholder="Enter your reason for leave"
+                            />
+
+                            <button type="submit">
+                                Submit Leave Application
+                            </button>
+                        </form>
+                    </section>
+                )}
+
+                {activeTab === "My Leaves" && (
+                    <section className="employee-panel">
+                        <h2>My Leave Applications</h2>
+
+                        <div className="employee-table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Type</th>
+                                        <th>From</th>
+                                        <th>To</th>
+                                        <th>Days</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {leaves.map((leave) => (
+                                        <tr key={leave.id}>
+                                            <td>{leave.id}</td>
+                                            <td>{leave.leaveType}</td>
+                                            <td>{leave.startDate}</td>
+                                            <td>{leave.endDate}</td>
+                                            <td>{leave.totalDays}</td>
+                                            <td>{leave.status}</td>
+                                        </tr>
+                                    ))}
+
+                                    {leaves.length === 0 && (
+                                        <tr>
+                                            <td colSpan="6">
+                                                No leave applications found.
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+                )}
+
+                {activeTab === "Leave Balance" && (
+                    <section className="employee-panel">
+                        <h2>My Leave Balance</h2>
+
+                        <div className="employee-cards">
+                            {leaveBalances.map((balance) => (
+                                <div className="employee-card" key={balance.id}>
+                                    <h3>{balance.leaveType}</h3>
+                                    <p>Total: {balance.totalDays}</p>
+                                    <p>Used: {balance.usedDays}</p>
+                                    <h2>
+                                        Remaining: {balance.remainingDays}
+                                    </h2>
+                                </div>
+                            ))}
+                        </div>
+
+                        {leaveBalances.length === 0 && (
+                            <p>No leave balance information available.</p>
+                        )}
+                    </section>
+                )}
+
+                {activeTab === "Profile" && (
+                    <section className="employee-panel">
+                        <h2>My Profile</h2>
+                        <p><strong>Name:</strong> {user?.employeeName || "—"}</p>
+                        <p><strong>Email:</strong> {user?.email || "—"}</p>
+                        <p><strong>Employee ID:</strong> {employeeId || "—"}</p>
+                        <p><strong>Role:</strong> {user?.role || "EMPLOYEE"}</p>
+                    </section>
+                )}
+            </main>
+        </div>
+    );
+}
+
+export default EmployeeDashboard;
